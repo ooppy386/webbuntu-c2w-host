@@ -301,9 +301,11 @@
         <div class="window-content">
             <div class="browser-toolbar">
                 <button class="fm-btn" onclick="document.getElementById('browser-iframe').src = document.getElementById('browser-iframe').src">⟳</button>
-                <input type="text" class="browser-url" id="browser-url-input" value="https://en.wikipedia.org/wiki/Main_Page" onkeydown="if(event.key==='Enter') { let u=this.value; if(!u.startsWith('http')) u='https://'+u; document.getElementById('browser-iframe').src=u; }">
+                <!-- Changed default URL to example.com -->
+                <input type="text" class="browser-url" id="browser-url-input" value="https://example.com" onkeydown="if(event.key==='Enter') { let u=this.value; if(!u.startsWith('http')) u='https://'+u; document.getElementById('browser-iframe').src=u; }">
             </div>
-            <iframe id="browser-iframe" src="https://en.wikipedia.org/wiki/Main_Page" style="flex-grow:1; border:none; background:white;"></iframe>
+            <!-- Changed default iframe source to example.com -->
+            <iframe id="browser-iframe" src="https://example.com" style="flex-grow:1; border:none; background:white;"></iframe>
         </div>
         <div class="resize-handle"></div>
     </div>
@@ -356,8 +358,7 @@
                     children: {
                         'Documents': { type: 'dir', children: {} },
                         'Downloads': { type: 'dir', children: {} },
-                        'ubuntu_deb': { type: 'dir', children: {} }, 
-                        'readme.txt': { type: 'file', content: "To use the C2W Terminal:\n1. Ensure your web server has Cross-Origin-Opener-Policy set to 'same-origin'.\n2. Put BOTH your .wasm and your .js glue file in the ubuntu_deb folder on your server!" },
+                        'readme.txt': { type: 'file', content: "To use the C2W Terminal:\n1. Ensure your web server has Cross-Origin-Opener-Policy set to 'same-origin'.\n2. Make sure ubuntu.wasm is in your main repository folder!" },
                     }
                 },
                 'Trash': { type: 'dir', children: {} }
@@ -381,7 +382,6 @@
                         vfs = getReq.result;
                         // Ensure core directories exist
                         if(!vfs['~']) vfs['~'] = { type: 'dir', children: {} };
-                        if(!vfs['~'].children['ubuntu_deb']) vfs['~'].children['ubuntu_deb'] = { type: 'dir', children: {} };
                         if(!vfs['Trash']) vfs['Trash'] = { type: 'dir', children: {} };
                     } else {
                         vfs = initVFS();
@@ -1033,9 +1033,10 @@
 
             // 3. Fetch and Instantiate the WebAssembly directly
             try {
-                term.writeln('\x1b[33m[SYSTEM] Fetching ubuntu_deb/ubuntu.wasm...\x1b[0m');
-                const response = await fetch('ubuntu_deb/ubuntu.wasm');
-                if (!response.ok) throw new Error(`HTTP ${response.status} - File not found. Make sure ubuntu.wasm is in the ubuntu_deb folder!`);
+                // CHANGED: Removed "ubuntu_deb/" from the fetch path!
+                term.writeln('\x1b[33m[SYSTEM] Fetching ubuntu.wasm...\x1b[0m');
+                const response = await fetch('ubuntu.wasm');
+                if (!response.ok) throw new Error(`HTTP ${response.status} - File not found. Make sure ubuntu.wasm is uploaded to your repo!`);
                 
                 const { instance } = await WebAssembly.instantiateStreaming(response, importObject);
                 wasmMemory = instance.exports.memory;
