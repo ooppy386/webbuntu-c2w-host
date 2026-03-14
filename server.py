@@ -2,18 +2,22 @@ import http.server
 import socketserver
 import os
 
-# Render provides a specific PORT, otherwise default to 8080 locally
-PORT = int(os.environ.get("PORT", 8080))
+# Render dynamically assigns a port, so we must read it from the environment.
+# If we are running locally, it defaults back to 8000.
+PORT = int(os.environ.get("PORT", 8000))
 
-class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
+class MyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
-        # These headers unlock SharedArrayBuffer for the WASM terminal
+        # Required for SharedArrayBuffer (Terminal) to work
         self.send_header("Cross-Origin-Opener-Policy", "same-origin")
-        self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        
+        # Changed from "require-corp" to "credentialless". 
+        # This allows the WebSurf iframes to function on Render without breaking the Terminal!
+        self.send_header("Cross-Origin-Embedder-Policy", "credentialless")
+        
         super().end_headers()
 
-socketserver.TCPServer.allow_reuse_address = True
-with socketserver.TCPServer(("", PORT), SecureHTTPRequestHandler) as httpd:
-    print(f"🚀 WebBuntu Server Running on Port: {PORT}")
+# Start the server
+with socketserver.TCPServer(("", PORT), MyHTTPRequestHandler) as httpd:
+    print(f"Serving at port {PORT}")
     httpd.serve_forever()

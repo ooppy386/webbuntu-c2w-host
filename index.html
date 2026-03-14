@@ -985,7 +985,7 @@
                 for(let i=0; i<data.length; i++) inputBuffer.push(data.charCodeAt(i));
             });
 
-            const wasi_snapshot_preview1 = {
+            const base_wasi = {
                 proc_exit: (code) => term.writeln(`\r\n\x1b[31m[Process exited with code ${code}]\x1b[0m`),
                 fd_write: (fd, iovs, iovs_len, nwritten) => {
                     if (!wasmMemory) return 0;
@@ -1026,9 +1026,20 @@
                 clock_time_get: () => 0, poll_oneoff: () => 0
             };
 
+            // Catch-all Proxy to prevent WASM from crashing on missing imports
+            const createWasiProxy = (baseObj) => new Proxy(baseObj, {
+                get(target, prop) {
+                    if (prop in target) return target[prop];
+                    return function(...args) {
+                        return 0; // Return 0 (success) for any unimplemented WASI syscall
+                    };
+                }
+            });
+
             const importObject = {
-                wasi_snapshot_preview1: wasi_snapshot_preview1,
-                env: { }
+                wasi_snapshot_preview1: createWasiProxy(base_wasi),
+                env: createWasiProxy({}),
+                wasi: createWasiProxy({})
             };
 
             // 3. Fetch and Instantiate the WebAssembly directly
