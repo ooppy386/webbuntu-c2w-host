@@ -179,7 +179,7 @@
     <!-- ================= WINDOWS ================= -->
 
     <!-- Container2Wasm Terminal Window -->
-    <div class="window" id="terminal-window" style="top: 60px; left: 100px; width: 800px; height: 500px; background: #000;">
+    <div class="window" id="terminal-window" style="top: 60px; left: 100px; width: 800px; height: 500px; background: #000;" onclick="if(typeof term !== 'undefined' && term) term.focus()">
         <div class="title-bar" style="background: linear-gradient(to bottom, #2a2a2a, #111);">
             <span>💻 Terminal (x86_64 c2w Engine)</span>
             <div class="title-controls">
@@ -264,7 +264,7 @@
             </div>
         </div>
         <div class="window-content" style="background: #000; display: flex; align-items: center; justify-content: center;">
-            <video id="mp-vid" controls style="width: 100%; height: 100%; outline: none;"></video>
+            <video id="mp-vid" controls style="width: 100%; height: 100%; outline: none"></video>
         </div>
         <div class="resize-handle"></div>
     </div>
@@ -345,6 +345,19 @@
             menu.style.display = 'flex';
         }
 
+        function renderStartMenu() {
+            const container = document.getElementById('start-menu-items');
+            if (!container) return;
+            container.innerHTML = '';
+            startMenuItems.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'menu-item';
+                div.innerHTML = item.label;
+                div.onclick = () => openApp(item.id);
+                container.appendChild(div);
+            });
+        }
+
         // --- File System (VFS) with IndexedDB Persistence ---
         let vfs = {};
         const DB_NAME = "WebBuntuFS";
@@ -418,17 +431,6 @@
             { id: 'text-window', label: '📝 Text Editor' }
         ];
 
-        function renderStartMenu() {
-            const container = document.getElementById('start-menu-items');
-            container.innerHTML = '';
-            startMenuItems.forEach(item => {
-                const div = document.createElement('div');
-                div.className = 'menu-item';
-                div.innerHTML = item.label;
-                div.onclick = () => openApp(item.id);
-                container.appendChild(div);
-            });
-        }
         renderStartMenu();
 
         // --- Window Manager ---
@@ -477,6 +479,11 @@
             const win = document.getElementById(id);
             win.style.zIndex = zIndexCounter;
             win.style.display = 'flex';
+            
+            if (id === 'terminal-window' && typeof term !== 'undefined' && term) {
+                term.focus(); // Fix #1: Ensure xterm.js captures physical keyboard
+            }
+            
             renderTaskbar();
         }
 
@@ -935,8 +942,9 @@
             if (c2wBooted) return;
             
             term = new Terminal({
+                convertEol: true, // <--- MAGIC FIX for text overwriting bug!
                 cursorBlink: true,
-                theme: { background: '#000000', foreground: '#ffffff' },
+                theme: { background: '#000000', foreground: '#33ff00' }, // Hacker green theme
                 fontFamily: '"Consolas", "Courier New", monospace',
                 fontSize: 14
             });
@@ -975,7 +983,15 @@
             // 3. Create a Blob URL so we don't need a separate worker.js file!
             const workerCode = `
             let wasmMemory;
+            let inputQueue = []; // Fix #2: Buffer for incoming keystrokes
+            
             self.onmessage = async (e) => {
+                if (e.data.type === 'terminal_input') {
+                    for (let i = 0; i < e.data.payload.length; i++) {
+                        inputQueue.push(e.data.payload.charCodeAt(i));
+                    }
+                }
+                
                 if (e.data.type === 'START') {
                     const { sharedBuffer, baseUrl } = e.data;
                     const sharedArray = new Int32Array(sharedBuffer); 
@@ -1006,11 +1022,17 @@
                             fd_read: (fd, iovs, iovs_len, nread) => {
                                 if (!wasmMemory) return 0;
                                 
-                                // Sleep and wait synchronously for the main thread to send a keystroke!
-                                Atomics.wait(sharedArray, 0, 0); 
+                                let charCode = 0;
                                 
-                                const charCode = sharedArray[1];
-                                Atomics.store(sharedArray, 0, 0); // Reset the state flag
+                                // First try to read from the postMessage queue (Fix #2)
+                                if (inputQueue.length > 0) {
+                                    charCode = inputQueue.shift();
+                                } else {
+                                    // Otherwise, sleep and wait synchronously for the Atomics signal (Fix #4)
+                                    Atomics.wait(sharedArray, 0, 0); 
+                                    charCode = sharedArray[1];
+                                    Atomics.store(sharedArray, 0, 0); // Reset the state flag
+                                }
 
                                 const view = new DataView(wasmMemory.buffer);
                                 if (iovs_len > 0) {
@@ -1078,6 +1100,10 @@
 
             // 6. Send Keystrokes TO the OS using Atomics
             term.onData(data => {
+                // Fix #2: Forward the keystrokes to the background Web Worker queue
+                osWorker.postMessage({ type: 'terminal_input', payload: data });
+                
+                // Fix #4: Also trigger the Atomics wake-up signal for synchronous c2w reads
                 for(let i=0; i<data.length; i++) {
                     sharedArray[1] = data.charCodeAt(i);
                     Atomics.store(sharedArray, 0, 1); // Set state to 1 (Data Ready)
