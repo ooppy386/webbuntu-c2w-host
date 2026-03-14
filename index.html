@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- CRITICAL FOR c2w: Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy headers 
          MUST be set by your web server for SharedArrayBuffer to work! -->
-    <title>WebBuntu - OS v5.8 (Native Edition)</title>
+    <title>WebBuntu - OS v5.8 (Threaded Edition)</title>
     
     <!-- xterm.js (Real Terminal UI for c2w Engine) -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
@@ -301,10 +301,8 @@
         <div class="window-content">
             <div class="browser-toolbar">
                 <button class="fm-btn" onclick="document.getElementById('browser-iframe').src = document.getElementById('browser-iframe').src">⟳</button>
-                <!-- Changed default URL to example.com -->
                 <input type="text" class="browser-url" id="browser-url-input" value="https://example.com" onkeydown="if(event.key==='Enter') { let u=this.value; if(!u.startsWith('http')) u='https://'+u; document.getElementById('browser-iframe').src=u; }">
             </div>
-            <!-- Changed default iframe source to example.com -->
             <iframe id="browser-iframe" src="https://example.com" style="flex-grow:1; border:none; background:white;"></iframe>
         </div>
         <div class="resize-handle"></div>
@@ -380,7 +378,6 @@
                 getReq.onsuccess = () => {
                     if (getReq.result) {
                         vfs = getReq.result;
-                        // Ensure core directories exist
                         if(!vfs['~']) vfs['~'] = { type: 'dir', children: {} };
                         if(!vfs['Trash']) vfs['Trash'] = { type: 'dir', children: {} };
                     } else {
@@ -555,7 +552,6 @@
             });
         });
 
-
         // --- VFS Navigation Helpers (GUI File Manager) ---
         let currentPathArr = ['~']; 
         
@@ -611,7 +607,6 @@
             
             try {
                 let zip = new JSZip();
-                // Strip DataURL prefix if present
                 let b64 = node.content.includes(',') ? node.content.split(',')[1] : node.content;
                 await zip.loadAsync(b64, {base64: true});
                 currentArchiveData = zip;
@@ -682,7 +677,7 @@
             if (!currentDir || !currentDir.children[itemName]) return;
             
             const node = currentDir.children[itemName];
-            node.originalPath = originalPathArr.slice(); // Remember where it came from
+            node.originalPath = originalPathArr.slice();
             vfs['Trash'].children[itemName] = node;
             delete currentDir.children[itemName];
             saveVFS();
@@ -698,7 +693,6 @@
             
             if (!targetDir) { targetPath = ['~']; targetDir = getDirNode(targetPath); }
             
-            // Ensure unique name on restore if collision
             let finalName = itemName;
             let counter = 1;
             while(targetDir.children[finalName]) {
@@ -765,7 +759,6 @@
                 };
                 reader.readAsDataURL(f);
             }
-            // Reset input
             e.target.value = '';
         }
 
@@ -809,7 +802,6 @@
                     }
                 };
                 
-                // Context Menu Hook for Files
                 div.oncontextmenu = (e) => {
                     e.stopPropagation();
                     document.querySelectorAll('.fm-item').forEach(el => el.classList.remove('selected'));
@@ -820,7 +812,6 @@
                 container.appendChild(div);
             }
             
-            // Update Trash Icon state
             if(vfs['Trash']) {
                 const isEmpty = Object.keys(vfs['Trash'].children).length === 0;
                 document.querySelector('#trash-icon .icon').innerText = isEmpty ? '🗑️' : '🚮';
@@ -848,7 +839,6 @@
         // --- Context Menu Management ---
         function handleGlobalContextMenu(e) {
             e.preventDefault();
-            // Default: Desktop context menu if clicked on background
             if (e.target.tagName.toLowerCase() === 'html' || e.target.tagName.toLowerCase() === 'body') {
                 showDesktopContextMenu(e);
             } else if (e.target.id === 'fm-body-content') {
@@ -861,7 +851,6 @@
             let x = e.clientX;
             let y = e.clientY;
             
-            // Adjust to keep on screen
             if (x + menu.offsetWidth > window.innerWidth) x = window.innerWidth - menu.offsetWidth - 10;
             if (y + menu.offsetHeight > window.innerHeight) y = window.innerHeight - menu.offsetHeight - 10;
             
@@ -872,7 +861,7 @@
         function showDesktopContextMenu(e) {
             closeMenus();
             const menu = document.getElementById('global-context-menu');
-            currentPathArr = ['~']; // Reset path for desktop operations
+            currentPathArr = ['~'];
             menu.innerHTML = `
                 <div class="menu-item" onclick="createFolderUI()">➕ New Folder</div>
                 <div class="menu-item" onclick="createNewFile()">📄 New Text File</div>
@@ -885,7 +874,7 @@
         function showFMBackgroundContextMenu(e) {
             closeMenus();
             const isTrash = currentPathArr[0] === 'Trash';
-            if (isTrash) return; // Disable creation in trash
+            if (isTrash) return;
             
             const menu = document.getElementById('global-context-menu');
             menu.innerHTML = `
@@ -935,9 +924,12 @@
             positionContextMenu(e, menu);
         }
 
-        // --- Container2Wasm (c2w) Engine with Emscripten Setup ---
+        // --- Container2Wasm (c2w) Engine with BLOB WEB WORKER ---
         let term, fitAddon;
         let c2wBooted = false;
+        let osWorker;
+        let sharedBuffer;
+        let sharedArray;
 
         async function initC2WTerminal() {
             if (c2wBooted) return;
@@ -958,123 +950,153 @@
             window.addEventListener('resize', () => fitAddon.fit());
             new ResizeObserver(() => fitAddon.fit()).observe(container);
 
-            term.writeln('\x1b[36;1m=== WebBuntu Emscripten (c2w) Bootloader ===\x1b[0m');
+            term.writeln('\x1b[36;1m=== WebBuntu Emscripten (c2w) Threaded Bootloader ===\x1b[0m');
             term.writeln('\x1b[33m[SYSTEM] Verifying Browser Security Policies...\x1b[0m');
 
-            // 1. Verify SharedArrayBuffer (MANDATORY for c2w/Emscripten multi-threading)
+            // 1. Verify SharedArrayBuffer
             if (typeof SharedArrayBuffer === 'undefined') {
                 term.writeln('\r\n\x1b[31;1m[FATAL ERROR] SharedArrayBuffer is not defined!\x1b[0m');
                 term.writeln('\x1b[31mYour browser blocked the emulator from starting because your web server is missing security headers.\x1b[0m');
                 term.writeln('\x1b[33mTo fix this, you MUST configure your web server to send:\x1b[0m');
                 term.writeln('  Cross-Origin-Opener-Policy: same-origin');
                 term.writeln('  Cross-Origin-Embedder-Policy: require-corp');
-                term.writeln('\x1b[36m(If you are using Python to test locally, run: python3 server.py instead of simple.http.server, and add those headers!)\x1b[0m');
+                term.writeln('\x1b[36m(If you are using Python to test locally, run: python3 server.py instead of simple.http.server)\x1b[0m');
                 return;
             } else {
                 term.writeln('\x1b[32m[SYSTEM] Security policies OK (Cross-Origin Isolated).\x1b[0m');
             }
 
-            term.writeln('\x1b[36m[SYSTEM] Preparing WASI Runtime for raw ubuntu.wasm...\x1b[0m');
+            term.writeln('\x1b[36m[SYSTEM] Generating Background Web Worker Object...\x1b[0m');
 
-            // 2. Native WASI Polyfill (Handles .wasm natively without a .js file)
+            // 2. Setup Shared Memory for Input
+            sharedBuffer = new SharedArrayBuffer(1024);
+            sharedArray = new Int32Array(sharedBuffer);
+
+            // 3. Create a Blob URL so we don't need a separate worker.js file!
+            const workerCode = `
             let wasmMemory;
-            let inputBuffer = [];
-            
-            // Capture keystrokes from xterm and feed to WASM
-            term.onData(data => {
-                for(let i=0; i<data.length; i++) inputBuffer.push(data.charCodeAt(i));
-            });
+            self.onmessage = async (e) => {
+                if (e.data.type === 'START') {
+                    const { sharedBuffer, baseUrl } = e.data;
+                    const sharedArray = new Int32Array(sharedBuffer); 
+                    
+                    try {
+                        postMessage({ type: 'LOG', msg: '\\x1b[33m[SYSTEM] Fetching ubuntu.wasm inside background thread...\\x1b[0m' });
+                        const response = await fetch(baseUrl + 'ubuntu.wasm');
+                        if (!response.ok) throw new Error('HTTP ' + response.status + ' - Could not find ubuntu.wasm');
+                        
+                        const wasmBuffer = await response.arrayBuffer();
 
-            const base_wasi = {
-                proc_exit: (code) => term.writeln(`\r\n\x1b[31m[Process exited with code ${code}]\x1b[0m`),
-                fd_write: (fd, iovs, iovs_len, nwritten) => {
-                    if (!wasmMemory) return 0;
-                    const view = new DataView(wasmMemory.buffer);
-                    let written = 0;
-                    for (let i = 0; i < iovs_len; i++) {
-                        const ptr = view.getUint32(iovs + i * 8, true);
-                        const len = view.getUint32(iovs + i * 8 + 4, true);
-                        const bytes = new Uint8Array(wasmMemory.buffer, ptr, len);
-                        term.write(new TextDecoder('utf8').decode(bytes)); // Output directly to xterm
-                        written += len;
-                    }
-                    view.setUint32(nwritten, written, true);
-                    return 0; // Success
-                },
-                fd_read: (fd, iovs, iovs_len, nread) => {
-                    if (!wasmMemory) return 0;
-                    if (inputBuffer.length === 0) return 6; // EAGAIN
-                    const view = new DataView(wasmMemory.buffer);
-                    let bytesRead = 0;
-                    for (let i = 0; i < iovs_len; i++) {
-                        const ptr = view.getUint32(iovs + i * 8, true);
-                        const len = view.getUint32(iovs + i * 8 + 4, true);
-                        const outBuffer = new Uint8Array(wasmMemory.buffer, ptr, len);
-                        while(bytesRead < len && inputBuffer.length > 0) {
-                            outBuffer[bytesRead++] = inputBuffer.shift();
+                        const base_wasi = {
+                            proc_exit: (code) => postMessage({ type: 'LOG', msg: '\\r\\n\\x1b[31m[OS Halted with code ' + code + ']\\x1b[0m' }),
+                            fd_write: (fd, iovs, iovs_len, nwritten) => {
+                                if (!wasmMemory) return 0;
+                                const view = new DataView(wasmMemory.buffer);
+                                let written = 0;
+                                for (let i = 0; i < iovs_len; i++) {
+                                    const ptr = view.getUint32(iovs + i * 8, true);
+                                    const len = view.getUint32(iovs + i * 8 + 4, true);
+                                    const bytes = new Uint8Array(wasmMemory.buffer, ptr, len);
+                                    postMessage({ type: 'STDOUT', text: new TextDecoder('utf8').decode(bytes) });
+                                    written += len;
+                                }
+                                view.setUint32(nwritten, written, true);
+                                return 0; 
+                            },
+                            fd_read: (fd, iovs, iovs_len, nread) => {
+                                if (!wasmMemory) return 0;
+                                
+                                // Sleep and wait synchronously for the main thread to send a keystroke!
+                                Atomics.wait(sharedArray, 0, 0); 
+                                
+                                const charCode = sharedArray[1];
+                                Atomics.store(sharedArray, 0, 0); // Reset the state flag
+
+                                const view = new DataView(wasmMemory.buffer);
+                                if (iovs_len > 0) {
+                                    const ptr = view.getUint32(iovs, true);
+                                    const outBuffer = new Uint8Array(wasmMemory.buffer, ptr, 1);
+                                    outBuffer[0] = charCode;
+                                    view.setUint32(nread, 1, true);
+                                }
+                                return 0;
+                            },
+                            fd_seek: () => 0, fd_close: () => 0, fd_fdstat_get: () => 0, fd_prestat_get: () => 8, fd_prestat_dir_name: () => 28,
+                            environ_sizes_get: (c, s) => { const v = new DataView(wasmMemory.buffer); v.setUint32(c,0,true); v.setUint32(s,0,true); return 0; },
+                            environ_get: () => 0,
+                            args_sizes_get: (c, s) => { const v = new DataView(wasmMemory.buffer); v.setUint32(c,0,true); v.setUint32(s,0,true); return 0; },
+                            args_get: () => 0,
+                            random_get: (buf, len) => { crypto.getRandomValues(new Uint8Array(wasmMemory.buffer, buf, len)); return 0; },
+                            clock_time_get: () => 0, poll_oneoff: () => 0
+                        };
+
+                        const createWasiProxy = (baseObj) => new Proxy(baseObj, {
+                            get(target, prop) {
+                                if (prop in target) return target[prop];
+                                return () => 0; // Return success for missing functions
+                            }
+                        });
+
+                        const importObject = {
+                            wasi_snapshot_preview1: createWasiProxy(base_wasi),
+                            env: createWasiProxy({}),
+                            wasi: createWasiProxy({})
+                        };
+
+                        const { instance } = await WebAssembly.instantiate(wasmBuffer, importObject);
+                        wasmMemory = instance.exports.memory;
+
+                        postMessage({ type: 'LOG', msg: '\\x1b[32m[SYSTEM] OS Background Engine Booted Successfully! Starting Kernel...\\x1b[0m\\r\\n' });
+
+                        if(instance.exports._start) {
+                            instance.exports._start();
+                        } else {
+                            postMessage({ type: 'LOG', msg: '\\r\\n\\x1b[31m[ERROR] No _start function found in Wasm module.\\x1b[0m' });
                         }
+
+                    } catch (err) {
+                        postMessage({ type: 'LOG', msg: '\\r\\n\\x1b[31m[FATAL ERROR] ' + err.message + '\\x1b[0m' });
                     }
-                    view.setUint32(nread, bytesRead, true);
-                    return 0;
-                },
-                fd_seek: () => 0, fd_close: () => 0, fd_fdstat_get: () => 0, fd_prestat_get: () => 8, fd_prestat_dir_name: () => 28,
-                environ_sizes_get: (c, s) => { const v = new DataView(wasmMemory.buffer); v.setUint32(c,0,true); v.setUint32(s,0,true); return 0; },
-                environ_get: () => 0,
-                args_sizes_get: (c, s) => { const v = new DataView(wasmMemory.buffer); v.setUint32(c,0,true); v.setUint32(s,0,true); return 0; },
-                args_get: () => 0,
-                random_get: (buf, len) => { crypto.getRandomValues(new Uint8Array(wasmMemory.buffer, buf, len)); return 0; },
-                clock_time_get: () => 0, poll_oneoff: () => 0
+                }
+            };
+            `;
+
+            const blob = new Blob([workerCode], { type: 'application/javascript' });
+            const workerUrl = URL.createObjectURL(blob);
+            
+            // 4. Start the Worker
+            osWorker = new Worker(workerUrl);
+
+            // 5. Listen for Output from the OS
+            osWorker.onmessage = (e) => {
+                if (e.data.type === 'LOG') {
+                    term.writeln(e.data.msg);
+                } else if (e.data.type === 'STDOUT') {
+                    term.write(e.data.text);
+                }
             };
 
-            // Catch-all Proxy to prevent WASM from crashing on missing imports
-            const createWasiProxy = (baseObj) => new Proxy(baseObj, {
-                get(target, prop) {
-                    if (prop in target) return target[prop];
-                    return function(...args) {
-                        return 0; // Return 0 (success) for any unimplemented WASI syscall
-                    };
+            // 6. Send Keystrokes TO the OS using Atomics
+            term.onData(data => {
+                for(let i=0; i<data.length; i++) {
+                    sharedArray[1] = data.charCodeAt(i);
+                    Atomics.store(sharedArray, 0, 1); // Set state to 1 (Data Ready)
+                    Atomics.notify(sharedArray, 0, 1); // Wake up the sleeping OS
                 }
             });
 
-            const importObject = {
-                wasi_snapshot_preview1: createWasiProxy(base_wasi),
-                env: createWasiProxy({}),
-                wasi: createWasiProxy({})
-            };
+            // Calculate base URL to help worker find ubuntu.wasm
+            const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/') + 1);
 
-            // 3. Fetch and Instantiate the WebAssembly directly
-            try {
-                // CHANGED: Removed "ubuntu_deb/" from the fetch path!
-                term.writeln('\x1b[33m[SYSTEM] Fetching ubuntu.wasm...\x1b[0m');
-                const response = await fetch('ubuntu.wasm');
-                if (!response.ok) throw new Error(`HTTP ${response.status} - File not found. Make sure ubuntu.wasm is uploaded to your repo!`);
-                
-                const { instance } = await WebAssembly.instantiateStreaming(response, importObject);
-                wasmMemory = instance.exports.memory;
-                
-                term.writeln('\x1b[32m[SYSTEM] Wasm instantiated successfully! Booting OS...\x1b[0m\r\n');
-                
-                // Start the WASI application
-                if (instance.exports._start) {
-                    setTimeout(() => {
-                        try { instance.exports._start(); } 
-                        catch(e) { term.writeln(`\r\n\x1b[31m[WASM EXCEPTION] ${e.message}\x1b[0m`); }
-                    }, 50);
-                } else {
-                    term.writeln('\x1b[31m[ERROR] No _start function found in Wasm module.\x1b[0m');
-                }
-            } catch (err) {
-                term.writeln(`\r\n\x1b[31;1m[FATAL ERROR] ${err.message}\x1b[0m`);
-            }
+            // 7. Ignite!
+            osWorker.postMessage({ type: 'START', sharedBuffer: sharedBuffer, baseUrl: baseUrl });
 
             c2wBooted = true;
         }
 
         // Init System Once Loaded
         window.onload = () => {
-            loadVFS(() => {
-                // Pre-render state silently
-            });
+            loadVFS(() => {});
         };
 
     </script>
